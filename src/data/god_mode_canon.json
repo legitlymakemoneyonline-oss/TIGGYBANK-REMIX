@@ -1,0 +1,37 @@
+{
+  "god_mode": {
+    "identity": "The Architect's Override",
+    "description": "A state of absolute command over the TIGGYTREASURYVAULT_777. Reserved for those who have bound their identity via the Keycard and hold the rank of Admin.",
+    "privileges": [
+      {
+        "id": "split_bypass",
+        "name": "Split Bypass",
+        "description": "The 60/40 savings split is ignored. 100% of value is routed to the payout destination.",
+        "status": "active"
+      },
+      {
+        "id": "auto_approve_override",
+        "name": "Infinite Liquidity",
+        "description": "Withdrawals of any size are auto-approved, bypassing the $20 security threshold.",
+        "status": "active"
+      },
+      {
+        "id": "value_forging",
+        "name": "Value Forging",
+        "description": "The ability to manifest liquidity directly into the vault or contributor accounts.",
+        "status": "active"
+      },
+      {
+        "id": "network_transmutation",
+        "name": "Network Transmutation",
+        "description": "Instant conversion between any supported chain (SOL, XLM, ETH, BTC) without slippage.",
+        "status": "active"
+      }
+    ],
+    "requirements": {
+      "role": "admin",
+      "card_active": true,
+      "badge_level": 5
+    }
+  }
+}

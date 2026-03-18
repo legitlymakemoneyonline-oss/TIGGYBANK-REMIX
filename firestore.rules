@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: users
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - balance: number (required)
+    //   - lockedSavings: number
+    //   - level: int
+    //   - isPremium: bool
+    //
+    // Collection: transactions
+    //   - uid: string (required)
+    //   - amount: number
+    //   - type: string (deposit, withdrawal, game_loss, fee)
+    //   - status: string
+    //
+    // Collection: withdrawals
+    //   - uid: string (required)
+    //   - amountCAD: number
+    //   - status: string
+    //
+    // Collection: votes
+    //   - uid: string (required)
+    //   - direction: string (up, down)
+    //   - timestamp: string
+    //   - txHash: string
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (request.auth.token.email == "morenojuffy@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'balance', 'level']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.balance is number &&
+             data.level is number &&
+             data.level >= 1 && data.level <= 10;
+    }
+
+    function isValidWithdrawal(data) {
+      return data.keys().hasAll(['uid', 'amountCAD', 'status', 'payoutAddress', 'timestamp']) &&
+             data.uid is string &&
+             data.amountCAD is number &&
+             data.status in ['pending', 'completed', 'failed'] &&
+             data.payoutAddress is string &&
+             data.payoutAddress.size() > 0 &&
+             data.payoutAddress.size() < 100;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['uid', 'amount', 'type', 'status', 'timestamp']) &&
+             data.uid is string &&
+             data.amount is number &&
+             data.type in ['deposit', 'withdrawal', 'game_loss', 'game_win', 'prepaid_withdrawal', 'prepaid_deposit'] &&
+             data.status in ['pending', 'completed', 'failed'];
+    }
+
+    // Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
+                    (isAdmin() || request.resource.data.role == resource.data.role);
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.uid && 
+                    isValidTransaction(request.resource.data) &&
+                    (request.resource.data.status == 'pending' || request.resource.data.amount > -20 || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.uid && 
+                    isValidWithdrawal(request.resource.data) &&
+                    (request.resource.data.status == 'pending' || request.resource.data.amountCAD < 20 || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /treasury/{treasuryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /votes/{voteId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

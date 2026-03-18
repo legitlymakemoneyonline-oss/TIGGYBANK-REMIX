@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and financial state",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "balance": { "type": "number", "description": "Total balance in CAD" },
+        "lockedSavings": { "type": "number", "description": "Amount locked due to level" },
+        "level": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "isPremium": { "type": "boolean" },
+        "walletAddress": { "type": "string" },
+        "savingsVaultAddress": { "type": "string" },
+        "prepaidCardId": { "type": "string" },
+        "isCardActive": { "type": "boolean" },
+        "cardDetails": {
+          "type": "object",
+          "properties": {
+            "last4": { "type": "string" },
+            "expiry": { "type": "string" },
+            "activatedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "balance", "level"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction log",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["deposit", "withdrawal", "game_loss", "fee"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "txHash": { "type": "string" }
+      },
+      "required": ["uid", "amount", "type", "status", "timestamp"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Crypto withdrawal request with 60/40 split logic",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "amountCAD": { "type": "number" },
+        "payoutAmount": { "type": "number", "description": "60% or 100% if God Mode" },
+        "savingsAmount": { "type": "number", "description": "40% or 0% if God Mode" },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "payoutAddress": { "type": "string" },
+        "savingsVaultAddress": { "type": "string" },
+        "txHash": { "type": "string" },
+        "method": { "type": "string", "enum": ["polygon", "prepaid_card"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "amountCAD", "status", "payoutAddress", "timestamp"]
+    },
+    "Treasury": {
+      "title": "Treasury",
+      "description": "Global treasury state and holdings (TIGGYTREASURYVAULT_777)",
+      "type": "object",
+      "properties": {
+        "walletAddress": { "type": "string" },
+        "totalHoldingsUSD": { "type": "number" },
+        "totalEarnedUSD": { "type": "number" },
+        "totalWithdrawnUSD": { "type": "number" },
+        "holdings": {
+          "type": "object",
+          "description": "Cross-chain asset mapping"
+        },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Global transaction history"
+    },
+    "withdrawals/{withdrawalId}": {
+      "schema": "Withdrawal",
+      "description": "Withdrawal requests"
+    },
+    "treasury/{treasuryId}": {
+      "schema": "Treasury",
+      "description": "Treasury wallet and holdings"
+    }
+  }
+}
