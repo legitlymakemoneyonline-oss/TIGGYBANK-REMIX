@@ -1,10 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, onSnapshot, setDoc, updateDoc, collection, addDoc, getDocFromServer, getDoc, query, where, getDocs, increment } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, updateDoc, collection, addDoc, getDocFromServer, getDoc, query, where, getDocs, increment, writeBatch } from 'firebase/firestore';
 import { UserProfile, Transaction, Treasury, TreasuryAsset } from '../types';
-import { LEVEL_THRESHOLDS } from '../constants';
-import { parseEther, formatUnits } from 'viem';
+import { LEVEL_THRESHOLDS, CAD_USD_RATE, MATIC_USD_RATE } from '../constants';
+import { parseEther, formatUnits, parseUnits } from 'viem';
+import { polygon } from 'viem/chains';
+import { useAccount, useDisconnect, useBalance, useSendTransaction, useConnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi';
+import { TIGGY_BANK_ADDRESS, TIGGY_BANK_ABI, ERC20_ABI } from '../constants/contracts';
+import { useWallet } from '@tronweb3/tronwallet-adapter-react-hooks';
+import { useWalletModal } from '@tronweb3/tronwallet-adapter-react-ui';
+import TronWeb from 'tronweb';
 import treasuryData from '../data/treasury_balances.json';
 
 const MOCK_RATES: { [key: string]: number } = {
@@ -70,18 +76,48 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
-import { useWeb3Modal } from '@web3modal/wagmi/react';
-import { useAccount, useDisconnect, useBalance, useSendTransaction } from 'wagmi';
-
 export function useTiggyState() {
-  const { open } = useWeb3Modal();
-  const { address: wagmiAddress, isConnected } = useAccount();
+  const { address: wagmiAddress, isConnected, connector } = useAccount();
   const { disconnect: wagmiDisconnect } = useDisconnect();
+  const { connectAsync, connectors } = useConnect();
+  const { switchChainAsync } = useSwitchChain();
+  const { chain } = useAccount();
   const { sendTransactionAsync: wagmiSendTransaction } = useSendTransaction();
   const { data: balanceData } = useBalance({
     address: wagmiAddress,
-    chainId: 137, // Polygon
   });
+
+  const { writeContractAsync: wagmiWriteContract } = useWriteContract();
+
+  const { data: onChainVaultBalanceRaw } = useReadContract({
+    address: TIGGY_BANK_ADDRESS as `0x${string}`,
+    abi: TIGGY_BANK_ABI,
+    functionName: 'vaultBalance',
+    args: wagmiAddress ? [wagmiAddress] : undefined,
+    query: {
+      enabled: !!wagmiAddress,
+      refetchInterval: 5000,
+    }
+  });
+
+  const { data: globalPoolBalanceRaw } = useReadContract({
+    address: TIGGY_BANK_ADDRESS as `0x${string}`,
+    abi: TIGGY_BANK_ABI,
+    functionName: 'poolBalance',
+    query: {
+      refetchInterval: 10000,
+    }
+  });
+
+  const { data: tokenAddress } = useReadContract({
+    address: TIGGY_BANK_ADDRESS as `0x${string}`,
+    abi: TIGGY_BANK_ABI,
+    functionName: 'token',
+  });
+
+  const { address: tronAddress, connected: isTronConnected, signTransaction } = useWallet();
+  const { setVisible: setTronModalVisible } = useWalletModal();
+  const [tronBalance, setTronBalance] = useState<string>('0');
 
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -93,9 +129,32 @@ export function useTiggyState() {
   const [error, setError] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState<string>('0');
+  const [isPrivateMode, setIsPrivateMode] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState<number | null>(null);
   const isAdmin = user?.email === 'morenojuffy@gmail.com';
   const isGodMode = isAdmin && profile?.isCardActive;
+
+  const totalUnroutedLosses = transactions
+    .filter(tx => tx.type === 'game_loss' && !tx.isRouted)
+    .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+
+  // Fetch Tron Balance
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (isTronConnected && tronAddress) {
+        try {
+          const tronWeb = new (TronWeb as any)({
+            fullHost: 'https://api.trongrid.io',
+          });
+          const balance = await tronWeb.trx.getBalance(tronAddress);
+          setTronBalance((balance / 1_000_000).toFixed(2));
+        } catch (err) {
+          console.error('Failed to fetch Tron balance:', err);
+        }
+      }
+    };
+    fetchBalance();
+  }, [isTronConnected, tronAddress]);
 
   useEffect(() => {
     if (isConnected && wagmiAddress) {
@@ -119,11 +178,25 @@ export function useTiggyState() {
         return mockAddr;
       }
 
-      await open();
-      return wagmiAddress || '';
-    } catch (error) {
+      // Find the best connector (prefer MetaMask)
+      const connector = connectors.find(c => c.id === 'io.metamask' || c.id === 'metaMask' || c.name.toLowerCase().includes('metamask')) || 
+                        connectors.find(c => c.id === 'injected') || 
+                        connectors[0];
+
+      if (!connector) {
+        throw new Error('No wallet connector found. Please install MetaMask or use a mobile wallet.');
+      }
+      
+      console.log('Tiggy: Using connector:', connector.id, connector.name);
+      const result = await connectAsync({ connector });
+      const addr = result.accounts[0] || '';
+      setWalletAddress(addr);
+      return addr;
+    } catch (error: any) {
       console.error('Tiggy: Wallet connection failed:', error);
-      throw error;
+      const msg = error.message || 'Failed to connect wallet';
+      setError(msg);
+      throw new Error(msg);
     }
   };
 
@@ -134,6 +207,10 @@ export function useTiggyState() {
       return;
     }
     wagmiDisconnect();
+  };
+
+  const connectTron = async () => {
+    setTronModalVisible(true);
   };
 
   useEffect(() => {
@@ -319,37 +396,184 @@ export function useTiggyState() {
       type,
       status: 'completed',
       timestamp: new Date().toISOString(),
+      from: type === 'deposit' ? walletAddress || 'EXTERNAL' : '0xTIGGYTREASURYVAULT_777',
+      to: type === 'deposit' ? '0xTIGGYTREASURYVAULT_777' : walletAddress || 'USER_WALLET'
     });
   }, [user, profile]);
 
-  const deposit = async (amount: number, method: 'polygon' | 'prepaid' = 'polygon') => {
-    if (method === 'polygon') {
-      // REAL MODE: Trigger actual transaction
-      const treasuryAddress = import.meta.env.VITE_TREASURY_ADDRESS || '0x109d273bc4ea81b36b2c1d051ae336a9780f4eeb';
-      
-      // Assume 1 MATIC = $0.50 CAD for demo purposes, or fetch real rate
-      const maticAmount = (amount / 0.5).toString(); 
-      
-      let txHash = '';
-      if (walletAddress?.startsWith('0xSIM_')) {
-        txHash = `SIM-DEP-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-      } else {
-        txHash = await wagmiSendTransaction({
-          to: treasuryAddress as `0x${string}`,
-          value: parseEther(maticAmount),
+  const deposit = async (amount: number, method: 'polygon' | 'prepaid' | 'plisio' | 'sticpay' | 'spritz' | 'tron' = 'polygon', manualHash?: string) => {
+    if (method === 'plisio') {
+      try {
+        const response = await fetch('/api/plisio/create-invoice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount,
+            uid: user?.uid,
+            currency: 'USDT_TRC20',
+            order_name: `Tiggy Deposit - ${user?.email}`,
+          }),
         });
+
+        const data = await response.json();
+        if (data.status === 'success' && data.data.invoice_url) {
+          window.open(data.data.invoice_url, '_blank');
+          return data.data.txn_id;
+        } else {
+          throw new Error(data.data.message || 'Failed to create Plisio invoice');
+        }
+      } catch (error: any) {
+        console.error('Plisio Deposit Error:', error);
+        throw error;
       }
-      
-      await updateBalance(amount, 'deposit');
-      
-      return txHash;
+    }
+
+    if (method === 'polygon') {
+      if (manualHash) {
+        // Manual Transfer Mode: Just record the hash and update balance (pending verification)
+        await updateBalance(amount, 'deposit');
+        return manualHash;
+      }
+
+      // OPTION B: Backend-powered deposit
+      try {
+        const response = await fetch('/api/onchain/deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid: user?.uid,
+            amountCAD: amount
+          }),
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+          // Balance is already updated in Firestore by the backend
+          return data.txHash;
+        } else {
+          throw new Error(data.error || 'Failed to process on-chain deposit');
+        }
+      } catch (error: any) {
+        console.error('On-Chain Deposit Error:', error);
+        throw error;
+      }
     }
     
     const type = method === 'prepaid' ? 'prepaid_deposit' : 'deposit';
     return updateBalance(amount, type);
   };
 
-  const withdraw = async (amountCAD: number, payoutAddress: string, isPrepaid: boolean = false) => {
+  const payBill = async (amountCAD: number, destinationAddress: string, network: 'polygon' | 'tron' = 'polygon') => {
+    if (!user || !profile || !treasury) return;
+
+    const withdrawable = profile.balance - profile.lockedSavings;
+    if (!isAdmin && amountCAD > withdrawable) throw new Error('Insufficient withdrawable funds for bill payment');
+    if (isAdmin && amountCAD > profile.balance) throw new Error('Insufficient total balance');
+
+    // Execute the transaction
+    let txHash = '';
+    const asset = network === 'polygon' ? 'MATIC' : 'TRX';
+    const rate = MOCK_RATES[asset] || 0.4;
+    const cryptoAmount = amountCAD / rate;
+    const cryptoAmountStr = cryptoAmount.toFixed(6);
+
+    try {
+      if (network === 'polygon') {
+        if (walletAddress?.startsWith('0xSIM_')) {
+          txHash = `SIM-BILL-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+        } else {
+          // Real Polygon transaction
+          if (!isConnected || !wagmiAddress || !connector) {
+            console.log('Tiggy: Wallet not connected, attempting to connect...');
+            const addr = await connect(false);
+            if (!addr) throw new Error('Please connect your Polygon wallet to pay this bill.');
+          }
+
+          // Ensure we are on Polygon
+          if (chain?.id !== 137) {
+            console.log('Tiggy: Switching to Polygon network...');
+            try {
+              await switchChainAsync({ chainId: 137 });
+            } catch (err) {
+              console.error('Failed to switch chain:', err);
+              throw new Error('Please switch your wallet to the Polygon network to pay this bill.');
+            }
+          }
+
+          // Add a small retry loop for "Connector not connected" error
+          let retryCount = 0;
+          const maxRetries = 3;
+          
+          while (retryCount < maxRetries) {
+            try {
+              txHash = await wagmiSendTransaction({
+                to: destinationAddress as `0x${string}`,
+                value: parseEther(cryptoAmountStr),
+                connector: connector, // Pass the connector explicitly
+              });
+              break; // Success!
+            } catch (err: any) {
+              if (err.message?.includes('Connector not connected') && retryCount < maxRetries - 1) {
+                console.log(`Tiggy: Connector not connected, retrying... (${retryCount + 1}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+                retryCount++;
+              } else {
+                throw err; // Re-throw if it's not the specific error or we're out of retries
+              }
+            }
+          }
+        }
+      } else {
+        // Tron logic
+        if (isTronConnected && tronAddress && signTransaction) {
+          const tronWeb = new (TronWeb as any)({
+            fullHost: 'https://api.trongrid.io',
+          });
+          
+          const transaction = await tronWeb.transactionBuilder.sendTrx(
+            destinationAddress,
+            Math.floor(cryptoAmount * 1_000_000),
+            tronAddress
+          );
+          
+          const signedTransaction = await signTransaction(transaction);
+          const result = await tronWeb.trx.sendRawTransaction(signedTransaction);
+          
+          if (result.result) {
+            txHash = result.txid;
+          } else {
+            throw new Error('Tron transaction failed to broadcast');
+          }
+        } else {
+          throw new Error('Tron wallet not connected');
+        }
+      }
+    } catch (err: any) {
+      console.error('Bill Pay Transaction Failed:', err);
+      throw new Error(`Bill payment failed: ${err.message}`);
+    }
+
+    // Update balance and log transaction
+    await updateDoc(doc(db, 'users', user.uid), {
+      balance: profile.balance - amountCAD,
+    });
+
+    await addDoc(collection(db, 'transactions'), {
+      uid: user.uid,
+      amount: -amountCAD,
+      type: 'bill_pay',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      txHash,
+      from: isAdmin ? '0xTIGGYTREASURYVAULT_777' : walletAddress || 'USER_WALLET',
+      to: destinationAddress,
+      network
+    });
+
+    return txHash;
+  };
+
+  const withdraw = async (amountCAD: number, payoutAddress: string, method: 'polygon' | 'prepaid' | 'plisio' | 'sticpay' | 'spritz' = 'polygon', isPrivate: boolean = false) => {
     if (!user || !profile || !treasury) return;
 
     const withdrawable = profile.balance - profile.lockedSavings;
@@ -358,9 +582,11 @@ export function useTiggyState() {
 
     // Check Treasury Liquidity (Automated Withdrawal)
     // We'll use MATIC for the payout if it's a real Polygon transaction
-    const payoutAsset = 'MATIC';
-    const rate = MOCK_RATES[payoutAsset] || 0.4; // CAD per MATIC
+    const payoutAsset = method === 'plisio' || method === 'sticpay' ? 'USDT' : 'MATIC';
+    const rate = MOCK_RATES[payoutAsset] || 0.4; // CAD per asset
     const cryptoAmount = amountCAD / rate;
+    // Round for display and parseEther
+    const cryptoAmountStr = cryptoAmount.toFixed(6);
 
     // God Mode: Admin can bypass 60/40 split
     const isGodModeActive = isGodMode;
@@ -370,19 +596,58 @@ export function useTiggyState() {
     const savingsAmount = isGodModeActive ? 0 : amountCAD * 0.4;
 
     let txHash = '';
+    const fromAddress = isAdmin ? '0xTIGGYTREASURYVAULT_777' : walletAddress || 'SYSTEM_VAULT';
     
-    if (!isPrepaid) {
+    if (method === 'plisio' || method === 'sticpay') {
+      try {
+        const response = await fetch('/api/plisio/payout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: payoutAmount,
+            to: payoutAddress,
+            uid: user.uid,
+            currency: 'USDT_TRC20',
+            method: method === 'sticpay' ? 'sticpay' : 'plisio'
+          }),
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+          txHash = data.data.txn_id;
+        } else {
+          throw new Error(data.data.message || `${method} payout failed`);
+        }
+      } catch (error: any) {
+        console.error(`${method} Payout Error:`, error);
+        throw error;
+      }
+    } else if (method === 'spritz') {
+      // Spritz Off-Ramp Simulation
+      console.log(`Tiggy: Off-ramping ${payoutAmount} CAD via Spritz to ${payoutAddress}`);
+      txHash = `SPRITZ-OR-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      // In a real app, we would trigger a transaction to Spritz's contract
+    } else if (method === 'polygon') {
       // REAL TRANSACTION: Trigger actual Polygon transaction
       try {
-        if (walletAddress?.startsWith('0xSIM_')) {
-          console.log('Tiggy: Simulation Mode - Skipping real transaction');
-          txHash = `SIM-TX-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+        if (walletAddress?.startsWith('0xSIM_') || isAdmin) {
+          console.log(`Tiggy: ${isAdmin ? 'Admin' : 'Simulation'} Mode - Payout from TIGGYTREASURYVAULT_777`);
+          txHash = `TREASURY-TX-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
         } else {
-          console.log(`Tiggy: Sending real transaction of ${cryptoAmount} MATIC to ${payoutAddress}`);
-          txHash = await wagmiSendTransaction({
-            to: payoutAddress as `0x${string}`,
-            value: parseEther(cryptoAmount.toString()),
-          });
+          console.log(`Tiggy: Sending real transaction of ${cryptoAmountStr} MATIC to ${payoutAddress}`);
+          try {
+            txHash = await wagmiSendTransaction({
+              to: payoutAddress as `0x${string}`,
+              value: parseEther(cryptoAmountStr),
+              gas: BigInt(30000), // Slightly higher than standard for safety
+            });
+          } catch (err: any) {
+            console.warn('Withdrawal gas estimation failed, retrying without manual gas limit:', err);
+            txHash = await wagmiSendTransaction({
+              to: payoutAddress as `0x${string}`,
+              value: parseEther(cryptoAmountStr),
+            });
+          }
           console.log(`Tiggy: Real transaction successful! Hash: ${txHash}`);
         }
       } catch (error: any) {
@@ -407,7 +672,8 @@ export function useTiggyState() {
         
         // Also update the network-specific balance for transparency
         if (newHoldings[payoutAsset].networks) {
-          const networkIndex = newHoldings[payoutAsset].networks!.findIndex(n => n.network === 'Polygon');
+          const networkName = method === 'plisio' ? 'TRON' : 'Polygon';
+          const networkIndex = newHoldings[payoutAsset].networks!.findIndex(n => n.network === networkName);
           if (networkIndex !== -1) {
             newHoldings[payoutAsset].networks![networkIndex].available_balance -= cryptoAmount;
             newHoldings[payoutAsset].networks![networkIndex].hot_balance -= cryptoAmount;
@@ -435,32 +701,84 @@ export function useTiggyState() {
       savingsAmount,
       payoutAddress,
       txHash,
-      method: isPrepaid ? 'prepaid_card' : 'polygon',
+      method,
+      isPrivate: isPrivate || isPrivateMode,
       savingsVaultAddress: profile.savingsVaultAddress || 'SYSTEM_VAULT',
       status,
       timestamp: new Date().toISOString(),
+      from: fromAddress,
+      to: payoutAddress
     });
 
     // Update balance (deduct full amount)
-    await updateBalance(-amountCAD, isPrepaid ? 'prepaid_withdrawal' : 'withdrawal');
+    await updateBalance(-amountCAD, method === 'prepaid' ? 'prepaid_withdrawal' : 'withdrawal');
     
     // Add to transactions with hash
     await addDoc(collection(db, 'transactions'), {
       uid: user.uid,
       amount: -amountCAD,
-      type: isPrepaid ? 'prepaid_withdrawal' : 'withdrawal',
+      type: method === 'prepaid' ? 'prepaid_withdrawal' : 'withdrawal',
       status,
       txHash,
       timestamp: new Date().toISOString(),
+      from: fromAddress,
+      to: payoutAddress
     });
 
     if (isGodModeActive) {
-      console.log(`GOD MODE: Automated Withdrawal processed via Prepaid Card ${profile.prepaidCardId || payoutAddress}. Split bypassed.`);
+      console.log(`GOD MODE: Automated Withdrawal processed via ${method} ${profile.prepaidCardId || payoutAddress}. Split bypassed.`);
     } else if (isAutoApprove) {
       console.log(`AUTOMATION: Withdrawal of ${amountCAD} CAD fulfilled automatically using Treasury Liquidity.`);
     } else {
       console.log(`SECURITY: Withdrawal of ${amountCAD} CAD requires manual Admin approval.`);
     }
+  };
+
+  const routeLosses = async () => {
+    if (!user || !profile) return;
+    
+    const unroutedTxs = transactions.filter(tx => tx.type === 'game_loss' && !tx.isRouted);
+    if (unroutedTxs.length === 0) return;
+
+    const totalLoss = unroutedTxs.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+    const savingsAmount = totalLoss * 0.4; // 40% of losses go to savings
+
+    const batch = writeBatch(db);
+    
+    // Update user profile
+    const userRef = doc(db, 'users', user.uid);
+    batch.update(userRef, {
+      lockedSavings: increment(savingsAmount)
+    });
+
+    // Mark transactions as routed
+    unroutedTxs.forEach(tx => {
+      if (tx.id) {
+        const txRef = doc(db, 'transactions', tx.id);
+        batch.update(txRef, { isRouted: true });
+      }
+    });
+
+    // Log routing transaction
+    const routingTxRef = doc(collection(db, 'transactions'));
+    batch.set(routingTxRef, {
+      uid: user.uid,
+      amount: savingsAmount,
+      type: 'deposit',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      description: `Loss routing: ${savingsAmount.toFixed(2)} CAD moved to savings ledger.`,
+      isRouted: true
+    });
+
+    await batch.commit();
+    console.log(`TIGGY: Routed ${totalLoss} CAD of losses. ${savingsAmount} CAD added to savings.`);
+  };
+
+  const forgeBalance = async (amountCAD: number) => {
+    if (!user || !profile) return;
+    const diff = amountCAD - profile.balance;
+    await updateBalance(diff, 'deposit');
   };
 
   const linkPrepaidCard = async (cardId: string, details: { last4: string, expiry: string, cvv: string }) => {
@@ -475,6 +793,7 @@ export function useTiggyState() {
       cardDetails: isActive ? {
         last4: details.last4,
         expiry: details.expiry,
+        cvv: (details as any).cvv,
         activatedAt: new Date().toISOString()
       } : null
     });
@@ -498,7 +817,7 @@ export function useTiggyState() {
     // For now, we just ensure the state refreshes
   };
 
-  const forgeValue = async (amount: number, targetUid?: string) => {
+  const forgeValue = async (amount: number, targetUid?: string, set: boolean = false) => {
     if (!isGodMode) throw new Error('God Mode required to forge value');
     
     const targetId = targetUid || user?.uid;
@@ -509,7 +828,7 @@ export function useTiggyState() {
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
       await updateDoc(userRef, {
-        balance: increment(amount)
+        balance: set ? amount : increment(amount)
       });
     }
 
@@ -520,10 +839,10 @@ export function useTiggyState() {
       type: 'forge',
       status: 'completed',
       timestamp: new Date().toISOString(),
-      description: `Value forged by TIGGYTREASURYVAULT_777. The ledger expands.`
+      description: `${set ? 'Balance set' : 'Value forged'} by TIGGYTREASURYVAULT_777. The ledger expands.`
     });
 
-    console.log(`GOD MODE: Forged ${amount} CAD for user ${targetId}.`);
+    console.log(`GOD MODE: ${set ? 'Set' : 'Forged'} ${amount} CAD for user ${targetId}.`);
   };
 
   const fulfillWithdrawal = async (id: string, realTxHash: string) => {
@@ -591,13 +910,50 @@ export function useTiggyState() {
       level: newLevel,
     });
 
-    await addDoc(collection(db, 'transactions'), {
+    const txRef = await addDoc(collection(db, 'transactions'), {
       uid: user.uid,
       amount: netChange,
       type: isLoss ? 'game_loss' : 'game_win',
       status: 'completed',
+      isRouted: false,
       timestamp: new Date().toISOString(),
     });
+
+    // INTEGRATION: If it's a loss, route it
+    if (isLoss) {
+      if (walletAddress && !walletAddress.startsWith('0xSIM_')) {
+        console.log('Tiggy: Loss detected, routing to Polygon contract via backend...');
+        try {
+          // We use the bet amount as the loss to route
+          const response = await fetch('/api/onchain/deposit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              uid: user.uid,
+              amountCAD: bet
+            })
+          });
+          
+          const data = await response.json();
+          if (data.status === 'success') {
+            console.log('Tiggy: On-chain routing successful!');
+            // Update the transaction to mark it as routed
+            await updateDoc(doc(db, 'transactions', txRef.id), {
+              isRouted: true,
+              txHash: data.txHash
+            });
+          }
+        } catch (err: any) {
+          console.error('Tiggy: On-chain routing failed:', err);
+          // Fallback to off-chain routing if on-chain fails
+          await routeLosses();
+        }
+      } else {
+        // Route to off-chain ledger if no wallet
+        console.log('Tiggy: No wallet connected, routing loss to off-chain ledger...');
+        await routeLosses();
+      }
+    }
   };
 
   const voteTreasury = async (direction: 'up' | 'down') => {
@@ -625,30 +981,191 @@ export function useTiggyState() {
     return mockHash;
   };
 
-  return {
-    user,
-    profile,
-    treasury,
-    loading,
-    showLevelUp,
-    setShowLevelUp,
-    deposit,
-    withdraw,
+  const resetWallet = async () => {
+    console.log('Tiggy: Resetting wallet state...');
+    try {
+      wagmiDisconnect();
+      setWalletAddress(null);
+      setWalletBalance('0');
+      // Clear any local storage wagmi might have
+      localStorage.removeItem('wagmi.connected');
+      localStorage.removeItem('wagmi.account');
+      localStorage.removeItem('wagmi.recentConnectorId');
+      console.log('Tiggy: Wallet state reset successfully');
+    } catch (error) {
+      console.error('Tiggy: Failed to reset wallet:', error);
+    }
+  };
+
+  const loseToRoute = async (amount: string) => {
+    if (!wagmiAddress) throw new Error('Wallet not connected');
+    
+    const amountUnits = parseEther(amount); // Using parseEther for MATIC
+    
+    // Route Loss by calling deposit()
+    const hash = await wagmiWriteContract({
+      address: TIGGY_BANK_ADDRESS as `0x${string}`,
+      abi: TIGGY_BANK_ABI,
+      functionName: 'deposit',
+      value: amountUnits,
+      account: wagmiAddress,
+      chain: polygon,
+    });
+    
+    return hash;
+  };
+
+  const routeUnroutedLosses = async () => {
+    if (!user || !walletAddress || totalUnroutedLosses <= 0) return;
+    
+    const unroutedTxs = transactions.filter(tx => tx.type === 'game_loss' && !tx.isRouted);
+    const amountToRoute = (totalUnroutedLosses * CAD_USD_RATE).toString();
+    
+    try {
+      // Use backend for routing all losses too
+      const response = await fetch('/api/onchain/deposit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: user.uid,
+          amountCAD: totalUnroutedLosses
+        })
+      });
+      
+      const data = await response.json();
+      if (data.status === 'success') {
+        const hash = data.txHash;
+        // Update all transactions in Firestore
+        const batch = writeBatch(db);
+        unroutedTxs.forEach(tx => {
+          if (tx.id) {
+            batch.update(doc(db, 'transactions', tx.id), {
+              isRouted: true,
+              txHash: hash
+            });
+          }
+        });
+        await batch.commit();
+        return hash;
+      } else {
+        throw new Error(data.error || 'Failed to route losses');
+      }
+    } catch (err: any) {
+      console.error('Failed to route all losses:', err);
+      throw err;
+    }
+  };
+
+  const withdrawFromContract = async (amount: string) => {
+    if (!wagmiAddress) throw new Error('Wallet not connected');
+    
+    const amountUnits = parseEther(amount);
+    
+    const hash = await wagmiWriteContract({
+      address: TIGGY_BANK_ADDRESS as `0x${string}`,
+      abi: TIGGY_BANK_ABI,
+      functionName: 'withdrawVault',
+      args: [amountUnits],
+      account: wagmiAddress,
+      chain: polygon,
+    });
+    
+    return hash;
+  };
+
+  const withdrawAllSavings = async () => {
+    if (!wagmiAddress) throw new Error('Wallet not connected');
+    
+    const hash = await wagmiWriteContract({
+      address: TIGGY_BANK_ADDRESS as `0x${string}`,
+      abi: TIGGY_BANK_ABI,
+      functionName: 'withdrawAllSavings',
+      account: wagmiAddress,
+      chain: polygon,
+    });
+    
+    return hash;
+  };
+
+  const managePool = async (to: string, amount: string) => {
+    if (!wagmiAddress) throw new Error('Wallet not connected');
+    if (!isAdmin) throw new Error('Admin only');
+    
+    const amountUnits = parseEther(amount);
+    
+    const hash = await wagmiWriteContract({
+      address: TIGGY_BANK_ADDRESS as `0x${string}`,
+      abi: TIGGY_BANK_ABI,
+      functionName: 'managePool',
+      args: [to as `0x${string}`, amountUnits],
+      account: wagmiAddress,
+      chain: polygon,
+    });
+    
+    return hash;
+  };
+
+  return { 
+    user, 
+    profile, 
+    treasury, 
+    transactions, 
+    loading, 
+    showLevelUp, 
+    setShowLevelUp, 
+    deposit, 
+    withdraw, 
     playGames,
-    transactions,
-    isAdmin,
-    isGodMode,
-    linkPrepaidCard,
-    forgeValue,
-    walletAddress,
-    walletBalance,
-    connect,
-    disconnect,
-    voteTreasury,
-    votes,
-    pendingWithdrawals,
-    fulfillWithdrawal,
-    error,
-    setError
+    isAdmin, 
+    isGodMode, 
+    linkPrepaidCard, 
+    forgeValue, 
+    walletAddress, 
+    walletBalance, 
+    tronAddress, 
+    isTronConnected, 
+    tronBalance, 
+    connect, 
+    disconnect, 
+    connectTron, 
+    payBill, 
+    voteTreasury, 
+    votes, 
+    pendingWithdrawals, 
+    fulfillWithdrawal, 
+    loseToRoute,
+    resetWallet, 
+    isPrivateMode, 
+    setIsPrivateMode, 
+    error, 
+    setError, 
+    onChainSavings: profile?.onChainSavings ? profile.onChainSavings.toFixed(2) : '0', 
+    onChainVaultBalance: onChainVaultBalanceRaw ? formatUnits(onChainVaultBalanceRaw as bigint, 18) : '0', 
+    globalPoolBalance: globalPoolBalanceRaw ? formatUnits(globalPoolBalanceRaw as bigint, 18) : '0', 
+    loseToRouteOnChain: loseToRoute, 
+    routeUnroutedLosses,
+    withdrawFromContract,
+    withdrawAllSavings,
+    managePool,
+    depositToPolygon: async (amountCAD: number) => {
+      if (!user) throw new Error('User not authenticated');
+      
+      const response = await fetch('/api/onchain/deposit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: user.uid,
+          amountCAD
+        })
+      });
+
+      const data = await response.json();
+      if (data.status === 'success') {
+        return data.txHash;
+      } else {
+        throw new Error(data.error || 'Failed to process on-chain deposit');
+      }
+    },
+    totalUnroutedLosses
   };
 }

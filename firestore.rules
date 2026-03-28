@@ -56,7 +56,9 @@ service cloud.firestore {
              data.email is string &&
              data.balance is number &&
              data.level is number &&
-             data.level >= 1 && data.level <= 10;
+             data.level >= 1 && data.level <= 10 &&
+             (!('role' in data) || data.role is string) &&
+             (!('isCardActive' in data) || data.isCardActive is bool);
     }
 
     function isValidWithdrawal(data) {
@@ -73,7 +75,7 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'amount', 'type', 'status', 'timestamp']) &&
              data.uid is string &&
              data.amount is number &&
-             data.type in ['deposit', 'withdrawal', 'game_loss', 'game_win', 'prepaid_withdrawal', 'prepaid_deposit'] &&
+             data.type in ['deposit', 'withdrawal', 'game_loss', 'game_win', 'prepaid_withdrawal', 'prepaid_deposit', 'identity_lock', 'forge'] &&
              data.status in ['pending', 'completed', 'failed'];
     }
 

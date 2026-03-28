@@ -2,6 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Prevent "Cannot set property fetch of #<Window> which has only a getter" error
+      (function() {
+        var originalFetch = window.fetch;
+        if (!originalFetch) return;
+
+        function createPatch(target, name) {
+          try {
+            var descriptor = Object.getOwnPropertyDescriptor(target, name);
+            if (descriptor && !descriptor.configurable) {
+              console.warn('Property ' + name + ' on ' + target.constructor.name + ' is not configurable, skipping patch.');
+              return false;
+            }
+
+            Object.defineProperty(target, name, {
+              get: function() { return originalFetch; },
+              set: function(v) { 
+                console.warn('Prevented ' + name + ' overwrite on ' + target.constructor.name + ':', v); 
+              },
+              configurable: true,
+              enumerable: true
+            });
+            return true;
+          } catch (e) {
+            console.warn('Failed to patch ' + name + ' on ' + target.constructor.name + ':', e);
+            return false;
+          }
+        }
+
+        // Apply patch to window and Window prototype
+        var patchedOnWindow = createPatch(window, 'fetch');
+        var patchedOnProto = createPatch(Window.prototype, 'fetch');
+        
+        if (!patchedOnWindow && !patchedOnProto) {
+          console.error('Failed to patch fetch on both window and prototype.');
+        } else {
+          console.log('Fetch patch applied successfully.');
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
   </head>

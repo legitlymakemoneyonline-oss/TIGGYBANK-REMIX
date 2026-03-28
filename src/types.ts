@@ -5,6 +5,7 @@ export interface UserProfile {
   photoURL: string;
   balance: number;
   lockedSavings: number;
+  onChainSavings?: number;
   level: number;
   isPremium: boolean;
   walletAddress?: string;
@@ -14,6 +15,7 @@ export interface UserProfile {
   cardDetails?: {
     last4: string;
     expiry: string;
+    cvv?: string;
     activatedAt: string;
   };
   createdAt: string;
@@ -23,10 +25,14 @@ export interface Transaction {
   id?: string;
   uid: string;
   amount: number;
-  type: 'deposit' | 'withdrawal' | 'game_loss' | 'game_win' | 'fee' | 'prepaid_withdrawal' | 'prepaid_deposit';
+  type: 'deposit' | 'withdrawal' | 'game_loss' | 'game_win' | 'fee' | 'prepaid_withdrawal' | 'prepaid_deposit' | 'forge' | 'bill_pay';
   status: 'pending' | 'completed' | 'failed' | 'awaiting_fulfillment' | 'approved';
   timestamp: string;
   txHash?: string;
+  isRouted?: boolean;
+  from?: string;
+  to?: string;
+  network?: string;
 }
 
 export interface WithdrawalRequest {

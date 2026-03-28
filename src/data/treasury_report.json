@@ -1,0 +1,165 @@
+{
+  "backup_metadata": {
+    "id": "TIG-WD-20260325-0001",
+    "timestamp": "2026-03-25T15:12:00Z",
+    "version": "2.1.0",
+    "treasury_value_usd": 55242378.86,
+    "stablecoin_reserve_usd": 22538067.78,
+    "reserve_ratio": "40.80%",
+    "liquidity_status": "OPTIMAL",
+    "engine_version": "v3.2.1",
+    "encryption": "AES-256",
+    "retention": "7 Years (Compliance)"
+  },
+  "summary_metrics": {
+    "total_withdrawals": 1247,
+    "total_amount_usd": 2401000,
+    "success_rate": "98.7%",
+    "avg_withdrawal_usd": 1925,
+    "largest_single_usd": 125000,
+    "fees_collected_usd": 12400
+  },
+  "liquidity_status": {
+    "immediate": {
+      "status": "OPTIMAL",
+      "value_usd": 22500000,
+      "assets": ["USDC", "USDT"]
+    },
+    "layer_2": {
+      "status": "MONITOR",
+      "value_usd": 23900000,
+      "assets": ["MATIC", "TON"]
+    },
+    "native_token": {
+      "status": "LOCKED",
+      "value_usd": 4700000,
+      "assets": ["TIGGY"]
+    }
+  },
+  "asset_breakdown": [
+    {
+      "asset": "USDC",
+      "count": 523,
+      "total_amount": 1045230.00,
+      "usd_value": 1045230,
+      "avg_time": "3.2 min",
+      "success_rate": "99.2%"
+    },
+    {
+      "asset": "USDT",
+      "count": 298,
+      "total_amount": 612450.00,
+      "usd_value": 612450,
+      "avg_time": "2.8 min",
+      "success_rate": "99.0%"
+    },
+    {
+      "asset": "MATIC",
+      "count": 187,
+      "total_amount": 245890.50,
+      "usd_value": 189340,
+      "avg_time": "5.1 min",
+      "success_rate": "98.4%"
+    },
+    {
+      "asset": "TON",
+      "count": 134,
+      "total_amount": 156780.25,
+      "usd_value": 423890,
+      "avg_time": "4.7 min",
+      "success_rate": "97.8%"
+    },
+    {
+      "asset": "TIGGY",
+      "count": 67,
+      "total_amount": 2340500.00,
+      "usd_value": 89340,
+      "avg_time": "8.3 min",
+      "success_rate": "95.5%"
+    },
+    {
+      "asset": "XLM",
+      "count": 28,
+      "total_amount": 45230.75,
+      "usd_value": 12450,
+      "avg_time": "2.1 min",
+      "success_rate": "100%"
+    },
+    {
+      "asset": "ETH",
+      "count": 10,
+      "total_amount": 12.45,
+      "usd_value": 28300,
+      "avg_time": "12.5 min",
+      "success_rate": "100%"
+    }
+  ],
+  "treasury_impact": {
+    "pre_withdrawal": {
+      "USDC": 17864287.34,
+      "USDT": 4673780.44,
+      "MATIC": 13512872.19,
+      "TON": 10407249.90,
+      "TIGGY": 4723652.04,
+      "total": 55242378.86
+    },
+    "post_withdrawal": {
+      "USDC": 16819057.34,
+      "USDT": 4061330.44,
+      "MATIC": 13323531.69,
+      "TON": 9983359.90,
+      "TIGGY": 4634312.04,
+      "total": 52841378.86
+    },
+    "liquidity_check": {
+      "stablecoin_percent": "38.15%",
+      "volatile_percent": "53.08%",
+      "rebalancing": "NOT REQUIRED"
+    }
+  },
+  "batch_log": [
+    { "id": "B-001", "time": "00:00 UTC", "count": 50, "asset": "USDC", "amount_usd": 50000, "status": "COMPLETE", "operator": "AUTO" },
+    { "id": "B-002", "time": "06:00 UTC", "count": 30, "asset": "MIXED", "amount_usd": 30000, "status": "COMPLETE", "operator": "AUTO" },
+    { "id": "B-003", "time": "12:00 UTC", "count": 25, "asset": "TON/MATIC", "amount_usd": 25000, "status": "COMPLETE", "operator": "AUTO" },
+    { "id": "B-004", "time": "18:00 UTC", "count": 40, "asset": "USDT", "amount_usd": 40000, "status": "PENDING", "operator": "MANUAL" }
+  ],
+  "compliance": {
+    "score": "100%",
+    "checks": [
+      { "item": "Source of Funds Verified", "status": "PASS", "timestamp": "14:32:18", "evidence": "TX-789234" },
+      { "item": "KYC Current", "status": "PASS", "timestamp": "14:32:19", "evidence": "KYC-4521" },
+      { "item": "AML Threshold Check", "status": "PASS", "timestamp": "14:32:20", "evidence": "Score: 15/100" },
+      { "item": "Geographic Restriction", "status": "PASS", "timestamp": "14:32:21", "evidence": "IP: US" },
+      { "item": "Gaming Integrity Check", "status": "PASS", "timestamp": "14:32:22", "evidence": "Provably Fair" }
+    ],
+    "alerts": [
+      { "type": "Large Withdrawal", "severity": "MEDIUM", "description": "100K single withdrawal detected", "action": "Admin notified" },
+      { "type": "Velocity Spike", "severity": "HIGH", "description": "10 withdrawals/hour/user", "action": "Auto-hold applied" },
+      { "type": "Suspicious Pattern", "severity": "CRITICAL", "description": "Round numbers + immediate withdrawal", "action": "Frozen pending review" },
+      { "type": "Network Congestion", "severity": "MEDIUM", "description": "Gas fees >50", "action": "Delayed processing" }
+    ]
+  },
+  "recovery": {
+    "locations": [
+      { "type": "PRIMARY", "provider": "AWS S3 (Encrypted)", "path": "s3://tiggybank-backups/withdrawals/" },
+      { "type": "SECONDARY", "provider": "Google Cloud Storage", "path": "gs://tiggybank-dr/withdrawals/" },
+      { "type": "COLD STORAGE", "provider": "Offline HDD (Air-gapped)", "path": "Location: [Secure Vault]" }
+    ],
+    "procedure": [
+      "# 1. Verify backup integrity",
+      "sha256sum -c withdrawal-backup-[DATE].sha256",
+      "",
+      "# 2. Decrypt backup",
+      "gpg --decrypt withdrawal-backup-[DATE].tar.gz.gpg",
+      "",
+      "# 3. Restore to staging",
+      "tar -xzf withdrawal-backup-[DATE].tar.gz -C /restore/",
+      "",
+      "# 4. Validate record count",
+      "wc -l /restore/withdrawals.csv",
+      "",
+      "# 5. Reconcile with treasury",
+      "python reconcile.py --date [DATE] --verbose"
+    ]
+  }
+}

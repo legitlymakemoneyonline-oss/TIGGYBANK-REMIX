@@ -1,3 +1,11 @@
+import { Buffer } from 'buffer';
+
+// Polyfill Buffer and global for the browser environment
+if (typeof window !== 'undefined') {
+  window.Buffer = Buffer;
+  window.global = window;
+}
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
